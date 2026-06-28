@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0f0d;
+  --foreground: #e8f5e9;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  min-height: 100vh;
+}
+
+@layer utilities {
+  .court-gradient {
+    background: radial-gradient(ellipse at top, #1a472a 0%, #0a0f0d 70%);
+  }
+}

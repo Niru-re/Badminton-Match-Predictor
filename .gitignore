@@ -1,0 +1,27 @@
+.env
+.env.local
+.env.*.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.ipynb_checkpoints/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Generated at build time (Vercel runs export_vercel_assets.py)
+data/processed/*.csv
+!data/processed/.gitkeep
+models/*.pkl
+models/*.json
+!models/.gitkeep
+
+# Keep deploy JSON optional for local dev without running export
+# data/deploy/*.json
+
+# Local dev only
+local_api.py

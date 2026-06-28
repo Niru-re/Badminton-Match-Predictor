@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "python scripts/export_vercel_assets.py && next build",
+  "installCommand": "npm install && pip install -r requirements-vercel.txt",
+  "functions": {
+    "api/**/*.py": {
+      "includeFiles": "{models/**,data/processed/**,src/**,scripts/**}"
+    }
+  }
+}

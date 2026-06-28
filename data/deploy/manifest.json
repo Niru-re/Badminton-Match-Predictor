@@ -1,0 +1,12 @@
+{
+  "default_discipline": "MS",
+  "disciplines": [
+    "MS",
+    "WS",
+    "MD",
+    "WD",
+    "XD"
+  ],
+  "model_accuracy": 0.5952,
+  "best_model": "random_forest"
+}
