@@ -1,5 +1,4 @@
-﻿{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
+{
   "framework": "nextjs",
   "buildCommand": "pip install --break-system-packages -r requirements-vercel.txt && python scripts/export_vercel_assets.py && next build",
   "installCommand": "npm install",
