@@ -1,10 +1,10 @@
 {
   "framework": "nextjs",
-  "buildCommand": "pip install --break-system-packages -r requirements-vercel.txt && python scripts/export_vercel_assets.py && next build",
+  "buildCommand": "pip install --break-system-packages -r requirements-vercel.txt && python scripts/export_model_json.py && python scripts/export_vercel_assets.py && next build",
   "installCommand": "npm install",
   "functions": {
     "api/**/*.py": {
-      "includeFiles": "{models/**,data/processed/**,src/**,scripts/**}"
+      "includeFiles": "{models/model_*.json,data/processed/features_*.csv,src/infer.py}"
     }
   }
 }

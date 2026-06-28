@@ -17,7 +17,8 @@ out/
 data/processed/*.csv
 !data/processed/.gitkeep
 models/*.pkl
-models/*.json
+models/metrics_*.json
+!models/model_*.json
 !models/.gitkeep
 
 # Keep deploy JSON optional for local dev without running export

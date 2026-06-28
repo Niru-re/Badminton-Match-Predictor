@@ -1,3 +1,4 @@
+# Build-time only (export_model_json.py + export_vercel_assets.py)
 pandas==2.2.2
 numpy==1.26.4
 scikit-learn==1.5.1
