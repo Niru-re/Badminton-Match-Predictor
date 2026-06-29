@@ -1,6 +1,8 @@
-"""BWF Badminton Match Predictor — Streamlit app."""
+﻿"""BWF Badminton Match Predictor â€” Streamlit app."""
 from __future__ import annotations
 
+import csv
+import json
 import sys
 from pathlib import Path
 
@@ -8,22 +10,66 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import json
 import pandas as pd
 import streamlit as st
 
-from src.predict import DISCIPLINES, list_players, predict_match, compute_live_features
+from src.predict import DISCIPLINES, list_players
+from src.infer import predict_proba
 from src.config import MODELS_DIR, PROCESSED_DIR
 
-# ── page config ────────────────────────────────────────────────────
+# â”€â”€ fast CSV-based feature loader (no pandas parse overhead) â”€â”€â”€â”€â”€â”€â”€
+@st.cache_data(show_spinner=False)
+def _load_feat_rows(discipline: str) -> list[dict]:
+    p = PROCESSED_DIR / f"features_{discipline.lower()}.csv"
+    with open(p, encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+@st.cache_data(show_spinner=False)
+def _cached_list_players(discipline: str) -> list[str]:
+    return list_players(discipline)
+
+
+
+    rows = _load_feat_rows(discipline)
+    p1r = [r for r in rows if r["player1"] == p1 or r["player2"] == p1]
+    p2r = [r for r in rows if r["player1"] == p2 or r["player2"] == p2]
+    if not p1r or not p2r:
+        raise ValueError("One or both players have no match history.")
+
+    def last(hist, player):
+        row = hist[-1]
+        if row["player1"] == player:
+            return float(row["player1_strength"]), float(row["recent_form_p1"]), int(float(row["fatigue_p1"]))
+        return float(row["player2_strength"]), float(row["recent_form_p2"]), int(float(row["fatigue_p2"]))
+
+    s1, f1, fat1 = last(p1r, p1)
+    s2, f2, fat2 = last(p2r, p2)
+    h2h = [r for r in rows if (r["player1"]==p1 and r["player2"]==p2) or (r["player1"]==p2 and r["player2"]==p1)]
+    p1w = sum(1 for r in h2h if (r["player1"]==p1 and r["target_player1_wins"]=="1") or (r["player2"]==p1 and r["target_player1_wins"]=="0"))
+    feats = {
+        "strength_diff": s1-s2, "head_to_head_diff": p1w-(len(h2h)-p1w),
+        "recent_form_p1": f1, "recent_form_p2": f2,
+        "fatigue_p1": fat1, "fatigue_p2": fat2,
+        "tournament_tier": tier, "round_importance": round_imp,
+    }
+    prob_p1 = predict_proba(discipline, feats)
+    prob_p2 = 1.0 - prob_p1
+    return {
+        "predicted_winner": p1 if prob_p1 >= prob_p2 else p2,
+        "player1_win_probability": round(prob_p1, 4),
+        "player2_win_probability": round(prob_p2, 4),
+        "features": feats,
+    }
+
+# â”€â”€ page config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.set_page_config(
     page_title="BWF Match Predictor",
-    page_icon="🏸",
+    page_icon="ðŸ¸",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── custom CSS ─────────────────────────────────────────────────────
+# â”€â”€ custom CSS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] { background: #0a0f0d; color: #e8f5e9; }
@@ -41,7 +87,7 @@ h1, h2, h3 { color: #f4d03f !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── helpers ────────────────────────────────────────────────────────
+# â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 DISC_LABELS = {
     "MS": "Men's Singles", "WS": "Women's Singles",
     "MD": "Men's Doubles", "WD": "Women's Doubles", "XD": "Mixed Doubles",
@@ -67,15 +113,15 @@ def load_matches_df() -> pd.DataFrame:
     p = PROCESSED_DIR / "matches_clean.csv"
     return pd.read_csv(p, parse_dates=["match_date"]) if p.exists() else pd.DataFrame()
 
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # SIDEBAR
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 with st.sidebar:
-    st.markdown("## 🏸 BWF Match Predictor")
+    st.markdown("## ðŸ¸ BWF Match Predictor")
     st.markdown("*ML-powered predictions using player strength, form, H2H & fatigue.*")
     st.divider()
 
-    tab_choice = st.radio("Navigate", ["⚡ Predictor", "📊 Dashboard", "📈 Analytics"], label_visibility="collapsed")
+    tab_choice = st.radio("Navigate", ["âš¡ Predictor", "ðŸ“Š Dashboard", "ðŸ“ˆ Analytics"], label_visibility="collapsed")
     st.divider()
 
     discipline = st.selectbox("Discipline", DISCIPLINES, format_func=lambda d: DISC_LABELS[d])
@@ -84,21 +130,21 @@ with st.sidebar:
     round_label = st.selectbox("Round", list(ROUNDS.keys()), index=2)
     round_imp = ROUNDS[round_label]
 
-    players = list_players(discipline)
+    players = _cached_list_players(discipline)
     st.divider()
-    st.caption(f"🗃️ {len(players)} players with match history")
+    st.caption(f"ðŸ—ƒï¸ {len(players)} players with match history")
 
     metrics = load_metrics(discipline)
     if metrics:
-        st.caption(f"🤖 Model: **{metrics.get('best_model','?')}**")
-        st.caption(f"🎯 Accuracy: **{metrics.get('best_accuracy',0)*100:.1f}%**")
+        st.caption(f"ðŸ¤– Model: **{metrics.get('best_model','?')}**")
+        st.caption(f"ðŸŽ¯ Accuracy: **{metrics.get('best_accuracy',0)*100:.1f}%**")
 
-# ══════════════════════════════════════════════════════════════════
-# TAB 1 — PREDICTOR
-# ══════════════════════════════════════════════════════════════════
-if tab_choice == "⚡ Predictor":
-    st.title("🏸 BWF Match Predictor")
-    st.markdown(f"**{DISC_LABELS[discipline]}** · {tier_label} · {round_label}")
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# TAB 1 â€” PREDICTOR
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+if tab_choice == "âš¡ Predictor":
+    st.title("ðŸ¸ BWF Match Predictor")
+    st.markdown(f"**{DISC_LABELS[discipline]}** Â· {tier_label} Â· {round_label}")
     st.divider()
 
     col1, col2 = st.columns(2)
@@ -110,12 +156,12 @@ if tab_choice == "⚡ Predictor":
 
     st.divider()
 
-    if st.button("⚡ Predict Winner", use_container_width=True, type="primary"):
-        with st.spinner("Running ML inference…"):
+    if st.button("âš¡ Predict Winner", use_container_width=True, type="primary"):
+        with st.spinner("Running ML inferenceâ€¦"):
             try:
-                result = predict_match(p1, p2, discipline, tier, round_imp)
+                result = predict_match_fast(p1, p2, discipline, tier, round_imp)
 
-                # ── winner banner ──
+                # â”€â”€ winner banner â”€â”€
                 winner = result["predicted_winner"]
                 st.markdown(f"""
                 <div class="winner-card">
@@ -124,24 +170,24 @@ if tab_choice == "⚡ Predictor":
                 </div>""", unsafe_allow_html=True)
                 st.markdown("")
 
-                # ── probability bars ──
+                # â”€â”€ probability bars â”€â”€
                 c1, c2 = st.columns(2)
                 p1_prob = result["player1_win_probability"]
                 p2_prob = result["player2_win_probability"]
 
                 with c1:
                     is_w = winner == p1
-                    st.markdown(f"**{'🏆 ' if is_w else ''}{tc(p1)}**")
+                    st.markdown(f"**{'ðŸ† ' if is_w else ''}{tc(p1)}**")
                     st.progress(p1_prob)
                     st.metric("Win Probability", f"{p1_prob*100:.1f}%")
 
                 with c2:
                     is_w = winner == p2
-                    st.markdown(f"**{'🏆 ' if is_w else ''}{tc(p2)}**")
+                    st.markdown(f"**{'ðŸ† ' if is_w else ''}{tc(p2)}**")
                     st.progress(p2_prob)
                     st.metric("Win Probability", f"{p2_prob*100:.1f}%")
 
-                # ── feature breakdown ──
+                # â”€â”€ feature breakdown â”€â”€
                 st.divider()
                 st.markdown("#### Feature Breakdown")
                 feats = result["features"]
@@ -160,12 +206,12 @@ if tab_choice == "⚡ Predictor":
             except Exception as e:
                 st.error(str(e))
 
-# ══════════════════════════════════════════════════════════════════
-# TAB 2 — DASHBOARD (court + live scorer)
-# ══════════════════════════════════════════════════════════════════
-elif tab_choice == "📊 Dashboard":
-    st.title("📊 Match Dashboard")
-    st.markdown(f"**{DISC_LABELS[discipline]}** · {tier_label} · {round_label}")
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# TAB 2 â€” DASHBOARD (court + live scorer)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+elif tab_choice == "ðŸ“Š Dashboard":
+    st.title("ðŸ“Š Match Dashboard")
+    st.markdown(f"**{DISC_LABELS[discipline]}** Â· {tier_label} Â· {round_label}")
     st.divider()
 
     col1, col2 = st.columns(2)
@@ -177,8 +223,8 @@ elif tab_choice == "📊 Dashboard":
 
     st.divider()
 
-    # ── live scoreboard ──────────────────────────────────────────
-    st.markdown("#### 🏸 Live Scoreboard")
+    # â”€â”€ live scoreboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.markdown("#### ðŸ¸ Live Scoreboard")
     if "sets" not in st.session_state:
         st.session_state.sets = [[0, 0]]
         st.session_state.cur_set = 0
@@ -201,17 +247,17 @@ elif tab_choice == "📊 Dashboard":
 
     # Point buttons
     bc1, bc2, bc3, bc4 = st.columns([2, 2, 2, 2])
-    if bc1.button(f"➕ Point → {tc(p1)[:15]}", use_container_width=True):
+    if bc1.button(f"âž• Point â†’ {tc(p1)[:15]}", use_container_width=True):
         st.session_state.sets[cur][0] += 1
         st.rerun()
-    if bc2.button(f"➕ Point → {tc(p2)[:15]}", use_container_width=True):
+    if bc2.button(f"âž• Point â†’ {tc(p2)[:15]}", use_container_width=True):
         st.session_state.sets[cur][1] += 1
         st.rerun()
-    if bc3.button("🆕 New Set", use_container_width=True) and cur < 2:
+    if bc3.button("ðŸ†• New Set", use_container_width=True) and cur < 2:
         st.session_state.sets.append([0, 0])
         st.session_state.cur_set += 1
         st.rerun()
-    if bc4.button("🔄 Reset", use_container_width=True):
+    if bc4.button("ðŸ”„ Reset", use_container_width=True):
         st.session_state.sets = [[0, 0]]
         st.session_state.cur_set = 0
         st.session_state.rally_log = []
@@ -219,8 +265,8 @@ elif tab_choice == "📊 Dashboard":
 
     st.divider()
 
-    # ── court diagram ─────────────────────────────────────────────
-    st.markdown("#### 🟩 Court View")
+    # â”€â”€ court diagram â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.markdown("#### ðŸŸ© Court View")
     is_doubles = discipline in ["MD", "WD", "XD"]
     p1s = p1.split()[0].upper() if p1 else "P1"
     p2s = p2.split()[0].upper() if p2 else "P2"
@@ -246,8 +292,8 @@ elif tab_choice == "📊 Dashboard":
 
     st.divider()
 
-    # ── shot tagger ───────────────────────────────────────────────
-    st.markdown("#### 🎯 Shot Tagger")
+    # â”€â”€ shot tagger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.markdown("#### ðŸŽ¯ Shot Tagger")
     tc1, tc2 = st.columns(2)
     shot_player = tc1.radio("Who hit?", [tc(p1)[:20], tc(p2)[:20]], horizontal=True)
     shot_outcome = tc2.radio("Outcome", ["In Play", "Winner", "Forced Error", "Unforced Error"], horizontal=True)
@@ -257,7 +303,7 @@ elif tab_choice == "📊 Dashboard":
     shot_phase = sc2.selectbox("Phase", ["Serve", "Return", "Attack", "Neutral", "Defense"])
     shot_var   = sc3.selectbox("Variation", ["Short", "Flick", "Drive", "Net", "Lift", "Smash"])
 
-    if st.button("📝 Log Shot", use_container_width=True):
+    if st.button("ðŸ“ Log Shot", use_container_width=True):
         cur_s = st.session_state.sets[st.session_state.cur_set]
         entry = {
             "Player": shot_player, "Type": shot_type, "Phase": shot_phase,
@@ -275,15 +321,15 @@ elif tab_choice == "📊 Dashboard":
         st.rerun()
 
     if st.session_state.rally_log:
-        st.markdown("#### 📋 Rally Log")
+        st.markdown("#### ðŸ“‹ Rally Log")
         st.dataframe(pd.DataFrame(st.session_state.rally_log[:15]), use_container_width=True, hide_index=True)
 
-    # ── prediction panel ──────────────────────────────────────────
+    # â”€â”€ prediction panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     st.divider()
-    if st.button("⚡ Get ML Prediction", use_container_width=True, type="primary"):
-        with st.spinner("Predicting…"):
+    if st.button("âš¡ Get ML Prediction", use_container_width=True, type="primary"):
+        with st.spinner("Predictingâ€¦"):
             try:
-                result = predict_match(p1, p2, discipline, tier, round_imp)
+                result = predict_match_fast(p1, p2, discipline, tier, round_imp)
                 w = result["predicted_winner"]
                 p1p = result["player1_win_probability"]
                 p2p = result["player2_win_probability"]
@@ -294,12 +340,12 @@ elif tab_choice == "📊 Dashboard":
             except Exception as e:
                 st.error(str(e))
 
-# ══════════════════════════════════════════════════════════════════
-# TAB 3 — ANALYTICS
-# ══════════════════════════════════════════════════════════════════
-elif tab_choice == "📈 Analytics":
-    st.title("📈 Analytics")
-    st.markdown(f"**{DISC_LABELS[discipline]}** — dataset insights & model performance")
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# TAB 3 â€” ANALYTICS
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+elif tab_choice == "ðŸ“ˆ Analytics":
+    st.title("ðŸ“ˆ Analytics")
+    st.markdown(f"**{DISC_LABELS[discipline]}** â€” dataset insights & model performance")
     st.divider()
 
     df_matches = load_matches_df()
@@ -312,17 +358,17 @@ elif tab_choice == "📈 Analytics":
 
     disc_df = df_matches[df_matches["discipline"] == discipline]
 
-    # ── overview metrics ──
+    # â”€â”€ overview metrics â”€â”€
     mc1, mc2, mc3, mc4 = st.columns(4)
     mc1.metric("Total Matches",    f"{len(disc_df):,}")
     mc2.metric("Unique Players",   len(set(disc_df["player1"]) | set(disc_df["player2"])))
-    mc3.metric("Date Range",       f"{disc_df['match_date'].min().year}–{disc_df['match_date'].max().year}")
+    mc3.metric("Date Range",       f"{disc_df['match_date'].min().year}â€“{disc_df['match_date'].max().year}")
     mc4.metric("Model Accuracy",   f"{metrics.get('best_accuracy',0)*100:.1f}%" if metrics else "N/A")
 
     st.divider()
     ac1, ac2 = st.columns(2)
 
-    # ── matches per year ──
+    # â”€â”€ matches per year â”€â”€
     with ac1:
         st.markdown("#### Matches per Year")
         yearly = disc_df.copy()
@@ -330,7 +376,7 @@ elif tab_choice == "📈 Analytics":
         chart = yearly.groupby("year").size().reset_index(name="matches")
         st.bar_chart(chart.set_index("year"))
 
-    # ── model comparison ──
+    # â”€â”€ model comparison â”€â”€
     with ac2:
         st.markdown("#### Model Accuracy Comparison")
         if metrics and "results" in metrics:
@@ -344,7 +390,7 @@ elif tab_choice == "📈 Analytics":
     st.divider()
     bc1, bc2 = st.columns(2)
 
-    # ── top players by wins ──
+    # â”€â”€ top players by wins â”€â”€
     with bc1:
         st.markdown("#### Top 10 Players by Wins")
         if not disc_df.empty:
@@ -355,7 +401,7 @@ elif tab_choice == "📈 Analytics":
             all_wins["Player"] = all_wins["Player"].apply(tc)
             st.dataframe(all_wins, use_container_width=True, hide_index=True)
 
-    # ── feature distributions ──
+    # â”€â”€ feature distributions â”€â”€
     with bc2:
         st.markdown("#### Feature Distribution")
         if not df_feats.empty:
@@ -366,8 +412,8 @@ elif tab_choice == "📈 Analytics":
 
     st.divider()
 
-    # ── H2H lookup ──
-    st.markdown("#### 🔍 Head-to-Head Lookup")
+    # â”€â”€ H2H lookup â”€â”€
+    st.markdown("#### ðŸ” Head-to-Head Lookup")
     hc1, hc2 = st.columns(2)
     hq1 = hc1.selectbox("Player A", players, format_func=tc, key="h2h_p1")
     hq2 = hc2.selectbox("Player B", [p for p in players if p != hq1], format_func=tc, key="h2h_p2")
